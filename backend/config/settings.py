@@ -45,7 +45,9 @@ INSTALLED_APPS = [
     'rest_framework',
     'corsheaders',
     'users',
-    'workspaces'
+    'workspaces',
+    'projects'
+    
 ]
 
 MIDDLEWARE = [
