@@ -44,7 +44,8 @@ INSTALLED_APPS = [
      # Third-party applications
     'rest_framework',
     'corsheaders',
-    'users'
+    'users',
+    'workspaces'
 ]
 
 MIDDLEWARE = [
@@ -147,4 +148,9 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
+}
+MAILERS = {
+    "default": {
+        "BACKEND": "django.core.mail.backends.console.EmailBackend",
+    },
 }
