@@ -1,0 +1,87 @@
+
+from django.db import transaction
+from rest_framework.exceptions import ValidationError
+from projects.models import Project
+from projects.models import ProjectMember
+from workspaces.models import WorkspaceMember
+
+from .models import Task
+
+
+@transaction.atomic
+def create_task(
+    *,
+    project,
+    title,
+    description="",
+    priority=Task.Priority.MEDIUM,
+    assignee=None,
+    due_date=None,
+    labels=None,
+    creator,
+):
+    """
+    Create a task inside a project.
+
+    Rules:
+    1. Creator must have access to the project.
+    2. Assignee must be a member of the project.
+    3. Task is created with TODO status by default.
+    """
+    if project.status != Project.Status.ACTIVE:
+        raise ValidationError({
+            "project": "Tasks can only be created in active projects."
+        })
+
+    # Check whether the creator is a project member.
+    is_project_member = ProjectMember.objects.filter(
+        project=project,
+        user=creator,
+    ).exists()
+
+    # Workspace Owners and Admins can also create tasks.
+    is_workspace_admin = WorkspaceMember.objects.filter(
+        workspace=project.workspace,
+        user=creator,
+        role__in=[
+            WorkspaceMember.Role.OWNER,
+            WorkspaceMember.Role.ADMIN,
+        ],
+    ).exists()
+
+    if not (is_project_member or is_workspace_admin):
+        raise ValidationError({
+            "permission": "You do not have permission to create tasks in this project."
+        })
+
+    # Validate the assignee.
+    if assignee is not None:
+        is_valid_assignee = ProjectMember.objects.filter(
+            project=project,
+            user=assignee,
+        ).exists()
+
+        if not is_valid_assignee:
+            raise ValidationError({
+                "assignee": "The assigned user must be a member of this project."
+            })
+
+    # Validate the title.
+    if not title or not title.strip():
+        raise ValidationError({
+            "title": "Task title cannot be empty."
+        })
+
+    # Create the task.
+    task = Task.objects.create(
+        project=project,
+        title=title.strip(),
+        description=description,
+        priority=priority,
+        assignee=assignee,
+        due_date=due_date,
+        created_by=creator,
+    )
+    if labels:
+        task.labels.set(labels)
+    return task

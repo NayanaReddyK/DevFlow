@@ -1,5 +1,6 @@
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
+from django.db.models.deletion import ProtectedError
 
 from rest_framework import generics, status
 from rest_framework.permissions import IsAuthenticated
@@ -104,7 +105,41 @@ class ProjectDetailView(generics.RetrieveUpdateDestroyAPIView):
         ).select_related(
             "workspace", "created_by"
         ).distinct()
+    def destroy(self, request, *args, **kwargs):
+        project = self.get_object()
 
+        is_workspace_admin = WorkspaceMember.objects.filter(
+            workspace=project.workspace,
+            user=request.user,
+            role=WorkspaceMember.Role.ADMIN,
+        ).exists()
+
+        if not is_workspace_admin and project.status != Project.Status.ARCHIVED:
+            return Response(
+                {"detail": "Only archived projects can be permanently deleted."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        if project.tasks.exists():
+            return Response(
+                {
+                    "detail": (
+                        "Projects containing tasks cannot be deleted. "
+                        "Preserve the project history by keeping it archived."
+                    )
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        try:
+            project.delete()
+        except ProtectedError:
+            return Response(
+                {"detail": "This project contains protected records and cannot be deleted."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     def get_serializer_class(self):
         if self.request.method in ["PUT", "PATCH"]:
@@ -234,7 +269,7 @@ class ProjectMemberDetailView(ProjectMemberBaseView):
         serializer.save()
 
         return Response(ProjectMemberSerializer(member).data)
-
+    
     def delete(self, request, project_id, user_id):
         project = self.get_project()
 

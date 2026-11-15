@@ -34,6 +34,8 @@ ALLOWED_HOSTS = []
 # Application definition
 
 INSTALLED_APPS = [
+    'daphne',
+    'channels',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -46,7 +48,8 @@ INSTALLED_APPS = [
     'corsheaders',
     'users',
     'workspaces',
-    'projects'
+    'projects',
+    'tasks',
     
 ]
 
@@ -154,5 +157,17 @@ REST_FRAMEWORK = {
 MAILERS = {
     "default": {
         "BACKEND": "django.core.mail.backends.console.EmailBackend",
+    },
+}
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+]
+# ASGI application
+ASGI_APPLICATION = "config.asgi.application"
+
+# Channel layer (local development)
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels.layers.InMemoryChannelLayer",
     },
 }

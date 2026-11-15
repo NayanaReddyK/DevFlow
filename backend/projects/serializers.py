@@ -59,8 +59,16 @@ class ProjectUpdateSerializer(serializers.ModelSerializer):
         fields = ["name", "description", "status"]
 
     def validate_status(self, value):
-        if value not in Project.Status.values:
-            raise serializers.ValidationError("Invalid project status.")
+        project = self.instance
+
+        if (
+            project.status == Project.Status.CANCELLED
+            and value != Project.Status.CANCELLED
+        ):
+            raise serializers.ValidationError(
+                "A cancelled project cannot be reactivated."
+            )
+
         return value
 
 

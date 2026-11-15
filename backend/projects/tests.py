@@ -497,3 +497,89 @@ def test_project_creator_cannot_be_removed():
         project=project,
         user=owner,
     ).exists()
+@pytest.mark.django_db
+def test_active_project_cannot_be_deleted():
+    owner = make_user("activeowner", "activeowner@example.com")
+    workspace = make_workspace(owner)
+    project = make_project(workspace, owner)
+
+    client = authenticated_client(owner)
+
+    response = client.delete(
+        f"/api/v1/projects/{project.id}/"
+    )
+
+    assert response.status_code == 409
+    assert Project.objects.filter(id=project.id).exists()
+
+
+@pytest.mark.django_db
+def test_archived_project_with_tasks_cannot_be_deleted(
+    django_user_model,
+):
+    from tasks.models import Task
+
+    owner = make_user("archiveowner", "archiveowner@example.com")
+    workspace = make_workspace(owner)
+    project = make_project(workspace, owner)
+
+    project.status = Project.Status.ARCHIVED
+    project.save()
+
+    Task.objects.create(
+        project=project,
+        title="Preserve this task",
+        created_by=owner,
+    )
+
+    client = authenticated_client(owner)
+
+    response = client.delete(
+        f"/api/v1/projects/{project.id}/"
+    )
+
+    assert response.status_code == 409
+    assert Project.objects.filter(id=project.id).exists()
+    assert Task.objects.filter(project=project).exists()
+
+
+@pytest.mark.django_db
+def test_archived_empty_project_can_be_deleted():
+    owner = make_user("emptyowner", "emptyowner@example.com")
+    workspace = make_workspace(owner)
+    project = make_project(workspace, owner)
+
+    project.status = Project.Status.ARCHIVED
+    project.save()
+
+    client = authenticated_client(owner)
+
+    response = client.delete(
+        f"/api/v1/projects/{project.id}/"
+    )
+
+    assert response.status_code == 204
+    assert not Project.objects.filter(id=project.id).exists()
+
+
+@pytest.mark.django_db
+def test_cancelled_project_cannot_be_reactivated():
+    owner = make_user("cancelowner", "cancelowner@example.com")
+    workspace = make_workspace(owner)
+    project = make_project(workspace, owner)
+
+    project.status = Project.Status.CANCELLED
+    project.save()
+
+    client = authenticated_client(owner)
+
+    response = client.patch(
+        f"/api/v1/projects/{project.id}/",
+        {"status": "ACTIVE"},
+        format="json",
+    )
+
+    assert response.status_code == 400
+
+    project.refresh_from_db()
+    assert project.status == Project.Status.CANCELLED

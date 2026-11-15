@@ -8,16 +8,16 @@ class Project(models.Model):
     class Status(models.TextChoices):
         ACTIVE = "ACTIVE", "Active"
         ARCHIVED = "ARCHIVED", "Archived"
+        CANCELLED = "CANCELLED", "Cancelled"
 
     workspace = models.ForeignKey(
         "workspaces.Workspace",
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         related_name="projects",
     )
 
     name = models.CharField(max_length=100)
     slug = models.SlugField(max_length=120)
-
     description = models.TextField(blank=True)
 
     status = models.CharField(
