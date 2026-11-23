@@ -36,13 +36,18 @@ class ProjectListSerializer(serializers.ModelSerializer):
     workspace_name = serializers.CharField(
         source="workspace.name", read_only=True
     )
+    workspace_slug = serializers.SlugField(
+        source="workspace.slug", read_only=True
+    )
     role = serializers.SerializerMethodField()
+    workspace_role = serializers.SerializerMethodField()
 
     class Meta:
         model = Project
         fields = [
             "id", "name", "slug", "description",
-            "status", "workspace_name", "role", "created_at",
+            "status", "workspace_name", "workspace_slug", "role", "created_at",
+            "start_date", "target_date", "workspace_role",
         ]
 
     def get_role(self, obj):
@@ -52,11 +57,17 @@ class ProjectListSerializer(serializers.ModelSerializer):
 
         return membership.role if membership else None
 
+    def get_workspace_role(self, obj):
+        membership = obj.workspace.memberships.filter(
+            user=self.context["request"].user
+        ).only("role").first()
+        return membership.role if membership else None
+
 
 class ProjectUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Project
-        fields = ["name", "description", "status"]
+        fields = ["name", "description", "status", "start_date", "target_date"]
 
     def validate_status(self, value):
         project = self.instance

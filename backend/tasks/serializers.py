@@ -1,7 +1,7 @@
 
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
-from .models import Task, TaskLabel
+from .models import Task, TaskLabel, TaskDependency
 from projects.models import ProjectMember
 
 from .services import create_task
@@ -110,7 +110,8 @@ class TaskSerializer(serializers.ModelSerializer):
     many=True,
     read_only=True,
     )
-    
+
+    is_blocked = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = Task
@@ -127,9 +128,12 @@ class TaskSerializer(serializers.ModelSerializer):
             "assignee",
             "assignee_username",
             "due_date",
+            "estimate",
+            "completed_at",
             "created_at",
             "updated_at",
-            "labels"
+            "labels",
+            "is_blocked",
         ]
         read_only_fields = fields
 
@@ -159,6 +163,7 @@ class TaskUpdateSerializer(
             "priority",
             "assignee",
             "due_date",
+            "estimate",
             "labels"
         ]
 
@@ -297,3 +302,74 @@ class TaskLabelSerializer(serializers.ModelSerializer):
             )
 
         return value
+
+
+class TaskDependencySerializer(serializers.ModelSerializer):
+    prerequisite_task_id = serializers.IntegerField(source="prerequisite_task.id", read_only=True)
+    prerequisite_task_title = serializers.CharField(source="prerequisite_task.title", read_only=True)
+    prerequisite_task_status = serializers.CharField(source="prerequisite_task.status", read_only=True)
+    dependent_task_id = serializers.IntegerField(source="dependent_task.id", read_only=True)
+    dependent_task_title = serializers.CharField(source="dependent_task.title", read_only=True)
+
+    class Meta:
+        model = TaskDependency
+        fields = [
+            "id",
+            "prerequisite_task_id",
+            "prerequisite_task_title",
+            "prerequisite_task_status",
+            "dependent_task_id",
+            "dependent_task_title",
+            "created_by",
+            "created_at",
+        ]
+        read_only_fields = fields
+
+
+class AddDependencySerializer(serializers.Serializer):
+    prerequisite_task_id = serializers.IntegerField()
+
+    def validate_prerequisite_task_id(self, value):
+        from .models import Task
+        try:
+            task = Task.objects.get(pk=value)
+        except Task.DoesNotExist:
+            raise serializers.ValidationError("Task not found.")
+        self.context["prerequisite_task"] = task
+        return value
+
+    def validate(self, attrs):
+        from .models import TaskDependency
+        from .services import has_cycle
+
+        dependent_task = self.context["dependent_task"]
+        prerequisite_task = self.context["prerequisite_task"]
+
+        # Must be same project
+        if prerequisite_task.project_id != dependent_task.project_id:
+            raise serializers.ValidationError(
+                "Dependencies must be within the same project."
+            )
+
+        # Self-dependency
+        if prerequisite_task.pk == dependent_task.pk:
+            raise serializers.ValidationError(
+                "A task cannot depend on itself."
+            )
+
+        # Already exists
+        if TaskDependency.objects.filter(
+            prerequisite_task=prerequisite_task,
+            dependent_task=dependent_task,
+        ).exists():
+            raise serializers.ValidationError(
+                "This dependency already exists."
+            )
+
+        # Cycle check
+        if has_cycle(prerequisite_task.pk, dependent_task.pk):
+            raise serializers.ValidationError(
+                "Adding this dependency would create a cycle."
+            )
+
+        return attrs

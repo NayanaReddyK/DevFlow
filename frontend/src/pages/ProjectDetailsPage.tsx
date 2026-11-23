@@ -1,20 +1,25 @@
 
 import { useCallback, useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import KanbanBoard from "../components/kanban/KanbanBoard";
 import {
   addProjectMember,
   getProject,
+  deleteProject,
   getProjectMembers,
   removeProjectMember,
   updateProject,
   updateProjectMemberRole,
+
   type Project,
   type ProjectMember,
 } from "../api/projectApi";
-
+import ProjectInsightsPanel from "../components/insights/ProjectInsightsPanel";
+import axios from "axios";
 export default function ProjectDetailsPage() {
-  const { projectId } = useParams<{ projectId: string }>();
+ const { projectId } = useParams<{ projectId: string }>();
+ const navigate = useNavigate();
+
 
   const [project, setProject] = useState<Project | null>(null);
   const [members, setMembers] = useState<ProjectMember[]>([]);
@@ -22,6 +27,7 @@ export default function ProjectDetailsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [addingMember, setAddingMember] = useState(false);
+  const [deletingProject, setDeletingProject] = useState(false);
 
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -40,14 +46,14 @@ export default function ProjectDetailsPage() {
 
   const loadProjectData = useCallback(async () => {
     if (!projectId || !Number.isInteger(numericProjectId) || numericProjectId <= 0) {
-      setError("Invalid project ID.");
-      setLoading(false);
+      queueMicrotask(() => {
+        setError("Invalid project ID.");
+        setLoading(false);
+      });
       return;
     }
 
     try {
-      setError("");
-
       const [projectData, memberData] = await Promise.all([
         getProject(numericProjectId),
         getProjectMembers(numericProjectId),
@@ -57,6 +63,7 @@ export default function ProjectDetailsPage() {
       setMembers(memberData);
       setName(projectData.name);
       setDescription(projectData.description || "");
+      setError("");
     } catch {
       setError("Unable to load project details or members.");
     } finally {
@@ -65,6 +72,8 @@ export default function ProjectDetailsPage() {
   }, [projectId, numericProjectId]);
 
   useEffect(() => {
+    // State updates happen when the asynchronous API requests resolve.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadProjectData();
   }, [loadProjectData]);
 
@@ -245,7 +254,30 @@ export default function ProjectDetailsPage() {
       </main>
     );
   }
+  const handleDeleteProject = async () => {
+  if (!project) return;
 
+  const confirmed = window.confirm(
+    `Permanently delete "${project.name}"? Projects containing tasks cannot be deleted.`
+  );
+  if (!confirmed) return;
+
+  try {
+    setDeletingProject(true);
+    setError("");
+    setSuccess("");
+    await deleteProject(project.id);
+    navigate("/workspaces");
+  } catch (error: unknown) {
+    const message = axios.isAxiosError<{ detail?: string }>(error)
+      ? error.response?.data?.detail
+      : undefined;
+
+    setError(message ?? "Unable to delete this project.");
+  } finally {
+    setDeletingProject(false);
+  }
+};
   return (
     <main className="min-h-screen bg-slate-950 text-white">
       <header className="flex items-center justify-between border-b border-slate-800 px-8 py-5">
@@ -263,10 +295,10 @@ export default function ProjectDetailsPage() {
 
       <section className="mx-auto max-w-6xl px-6 py-10">
         <Link
-          to="/workspaces"
+          to={`/workspaces/${project.workspace_slug}`}
           className="text-sm text-blue-400 hover:text-blue-300"
         >
-          ← Back to workspaces
+          ← Back to {project.workspace_name} projects
         </Link>
 
         {/* Project header */}
@@ -308,6 +340,17 @@ export default function ProjectDetailsPage() {
                   </button>
                 )}
               </>
+            )}
+            {(project.workspace_role === "OWNER" ||
+              project.workspace_role === "ADMIN") && (
+              <button
+                type="button"
+                onClick={handleDeleteProject}
+                disabled={deletingProject}
+                className="rounded-lg border border-red-900 px-4 py-2 text-sm text-red-400 hover:bg-red-950 disabled:opacity-50"
+              >
+                {deletingProject ? "Deleting..." : "Delete project"}
+              </button>
             )}
           </div>
         </div>
@@ -364,6 +407,9 @@ export default function ProjectDetailsPage() {
             </div>
           </div>
         </section>
+      <ProjectInsightsPanel projectId={project.id} />
+
+
       {/* Kanban Board */}
 <section className="mt-10">
   <div className="mb-5">
@@ -378,9 +424,11 @@ export default function ProjectDetailsPage() {
       The task board is read-only because this project is {project.status.toLowerCase()}.
     </div>
   ) : (
-    <KanbanBoard 
-      projectId={project.id} 
+    <KanbanBoard
+      projectId={project.id}
       members={members}
+      canDeleteTasks={canManageProject}
+      canManageDependencies={canManageProject}
       />
 
   )}
@@ -431,7 +479,6 @@ export default function ProjectDetailsPage() {
             </form>
           </section>
         )}
-
         {/* Add project member */}
         {canManageProject && !isArchived && !isCancelled && (
           <section className="mt-8 rounded-xl border border-slate-800 bg-slate-900 p-6">

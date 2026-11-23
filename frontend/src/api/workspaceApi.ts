@@ -89,3 +89,6 @@ export const getWorkspaceInvitations = async (
 
   return response.data;
 };
+export const deleteWorkspace = async (slug: string): Promise<void> => {
+  await api.delete(`/workspaces/${slug}/`);
+};

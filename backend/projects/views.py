@@ -19,6 +19,14 @@ from .serializers import (
     ProjectMemberRoleSerializer,
 )
 from .permissions import ProjectPermission
+from tasks.insights import (
+    get_project_summary,
+    get_bottlenecks,
+    get_stale_blockers,
+    get_critical_path,
+    get_recommendations,
+    get_workload,
+)
 
 
 class WorkspaceProjectListCreateView(generics.ListCreateAPIView):
@@ -293,3 +301,69 @@ class ProjectMemberDetailView(ProjectMemberBaseView):
 
         member.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ProjectInsightBaseView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get_project(self):
+        user = self.request.user
+        accessible = Project.objects.filter(
+            Q(memberships__user=user)
+            | Q(
+                workspace__memberships__user=user,
+                workspace__memberships__role__in=[
+                    WorkspaceMember.Role.OWNER,
+                    WorkspaceMember.Role.ADMIN,
+                ],
+            )
+        ).distinct()
+        return get_object_or_404(accessible, pk=self.kwargs["project_id"])
+
+
+class ProjectInsightSummaryView(ProjectInsightBaseView):
+    def get(self, request, project_id):
+        project = self.get_project()
+        summary = get_project_summary(project)
+        workload = get_workload(project)
+        return Response({**summary, "workload": workload})
+
+
+class ProjectInsightBottlenecksView(ProjectInsightBaseView):
+    def get(self, request, project_id):
+        project = self.get_project()
+        return Response({
+            "bottlenecks": get_bottlenecks(project),
+            "stale_blockers": get_stale_blockers(project),
+        })
+
+
+class ProjectInsightCriticalPathView(ProjectInsightBaseView):
+    def get(self, request, project_id):
+        project = self.get_project()
+        cp = get_critical_path(project)
+        # Enrich with task titles
+        from tasks.models import Task
+        task_map = {
+            t["id"]: t
+            for t in Task.objects.filter(
+                id__in=cp["task_ids"]
+            ).values("id", "title", "status", "priority", "due_date")
+        }
+        ordered_tasks = [task_map[tid] for tid in cp["task_ids"] if tid in task_map]
+        for t in ordered_tasks:
+            if t["due_date"]:
+                t["due_date"] = t["due_date"].isoformat()
+        return Response({
+            "length": cp["length"],
+            "evidence": cp["evidence"],
+            "tasks": ordered_tasks,
+        })
+
+
+class ProjectRecommendationsView(ProjectInsightBaseView):
+    def get(self, request, project_id):
+        project = self.get_project()
+        return Response({
+            "recommendations": get_recommendations(project),
+        })
