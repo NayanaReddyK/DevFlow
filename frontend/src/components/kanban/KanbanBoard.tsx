@@ -30,11 +30,15 @@ const columns: { id: TaskStatus; title: string }[] = [
 interface KanbanBoardProps {
   projectId: number;
   members: ProjectMember[];
+  canDeleteTasks: boolean;
+  canManageDependencies: boolean;
 }
 
 export default function KanbanBoard({
   projectId,
   members,
+  canDeleteTasks,
+  canManageDependencies,
 }: KanbanBoardProps) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [labels, setLabels] = useState<TaskLabel[]>([]);
@@ -143,7 +147,7 @@ export default function KanbanBoard({
 
   const handleDragEnd = async (result: DropResult) => {
     const { destination, source, draggableId } = result;
-    
+
     if (!destination || destination.droppableId === source.droppableId) {
       return;
     }
@@ -514,7 +518,7 @@ export default function KanbanBoard({
                     <div
                       ref={provided.innerRef}
                       {...provided.droppableProps}
-                      
+
                       className={`min-h-[350px] space-y-3 rounded-lg transition-colors ${
                         snapshot.isDraggingOver ? "bg-blue-50" : ""
                       }`}
@@ -583,7 +587,7 @@ export default function KanbanBoard({
                                 )}
                               </div>
                             </div>
-                            
+
                           )}
                         </Draggable>
                       ))}
@@ -605,21 +609,32 @@ export default function KanbanBoard({
           })}
         </div>
       </DragDropContext>
-      {selectedTask && (
+{selectedTask && (
   <TaskDetailDrawer
     task={selectedTask}
     members={members}
     labels={labels}
+    projectTasks={tasks}
+    canDeleteTasks={canDeleteTasks}
+    canManageDependencies={canManageDependencies}
+
     onClose={() => setSelectedTask(null)}
     onSaved={(updatedTask) => {
       setTasks((currentTasks) =>
-        currentTasks.map((task) =>
-          task.id === updatedTask.id ? updatedTask : task
+        currentTasks.map((currentTask) =>
+          currentTask.id === updatedTask.id ? updatedTask : currentTask
         )
       );
 
       setSelectedTask(updatedTask);
     }}
+    onDeleted={(taskId) => {
+      setTasks((currentTasks) =>
+        currentTasks.filter((currentTask) => currentTask.id !== taskId)
+      );
+      setSelectedTask(null);
+
+}}
   />
 )}
     </div>

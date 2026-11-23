@@ -23,6 +23,22 @@ export interface TaskLabel {
   name: string;
   color: string;
 }
+export interface TaskDependency {
+  id: number;
+  prerequisite_task_id: number;
+  prerequisite_task_title: string;
+  prerequisite_task_status: TaskStatus;
+  dependent_task_id: number;
+  dependent_task_title: string;
+  created_by: number | null;
+  created_at: string;
+}
+
+export interface TaskDependencies {
+  prerequisites: TaskDependency[];
+  dependents: TaskDependency[];
+}
+
 export interface UpdateTaskData {
   title?: string;
   description?: string;
@@ -132,4 +148,35 @@ export const updateTask = async (
   );
 
   return response.data;
+};
+export const getTaskDependencies = async (
+  taskId: number
+): Promise<TaskDependencies> => {
+  const response = await api.get<TaskDependencies>(
+    `/tasks/${taskId}/dependencies/`
+  );
+  return response.data;
+};
+
+export const addTaskDependency = async (
+  taskId: number,
+  prerequisiteTaskId: number
+): Promise<TaskDependency> => {
+  const response = await api.post<TaskDependency>(
+    `/tasks/${taskId}/dependencies/`,
+    { prerequisite_task_id: prerequisiteTaskId }
+  );
+  return response.data;
+};
+
+export const removeTaskDependency = async (
+  taskId: number,
+  dependencyId: number
+): Promise<void> => {
+  await api.delete(
+    `/tasks/${taskId}/dependencies/${dependencyId}/`
+  );
+};
+export const deleteTask = async (taskId: number): Promise<void> => {
+  await api.delete(`/tasks/${taskId}/`);
 };

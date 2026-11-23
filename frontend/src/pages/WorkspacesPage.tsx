@@ -13,9 +13,9 @@ export default function WorkspacesPage() {
 
   const fetchWorkspaces = async () => {
     try {
-      setError("");
       const data = await getWorkspaces();
       setWorkspaces(data);
+      setError("");
     } catch {
       setError("Unable to load workspaces.");
     } finally {
@@ -24,6 +24,8 @@ export default function WorkspacesPage() {
   };
 
   useEffect(() => {
+    // State updates happen when the asynchronous API request resolves.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchWorkspaces();
   }, []);
 

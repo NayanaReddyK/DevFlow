@@ -32,6 +32,9 @@ class Project(models.Model):
         related_name="created_projects",
     )
 
+    start_date = models.DateField(null=True, blank=True)
+    target_date = models.DateField(null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

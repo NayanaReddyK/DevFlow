@@ -4,6 +4,8 @@ from .views import (
     TaskDetailView,
     ProjectLabelListCreateView,
     TaskLabelDetailView,
+    TaskDependencyListCreateView,
+    TaskDependencyDetailView,
 )
 urlpatterns = [
     path(
@@ -25,5 +27,15 @@ urlpatterns = [
         "labels/<int:pk>/",
         TaskLabelDetailView.as_view(),
         name="task-label-detail",
+    ),
+    path(
+        "tasks/<int:task_pk>/dependencies/",
+        TaskDependencyListCreateView.as_view(),
+        name="task-dependency-list-create",
+    ),
+    path(
+        "tasks/<int:task_pk>/dependencies/<int:dep_id>/",
+        TaskDependencyDetailView.as_view(),
+        name="task-dependency-detail",
     ),
 ]

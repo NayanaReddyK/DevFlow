@@ -1,26 +1,32 @@
 
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
-
-import {
-  updateTask,
-  type TaskLabel,
-} from "../../api/taskApi";
-
 import type {
   Task,
   TaskStatus,
   TaskPriority,
 } from "../../types/task";
-
+import {
+  addTaskDependency,
+  deleteTask,
+  getTaskDependencies,
+  removeTaskDependency,
+  updateTask,
+  type TaskDependencies,
+  type TaskLabel,
+} from "../../api/taskApi";
 import type { ProjectMember } from "../../api/projectApi";
 
 interface TaskDetailDrawerProps {
   task: Task;
+  projectTasks: Task[];
   members: ProjectMember[];
   labels: TaskLabel[];
+  canDeleteTasks: boolean;
+  canManageDependencies: boolean;
   onClose: () => void;
   onSaved: (updatedTask: Task) => void;
+  onDeleted: (taskId: number) => void;
 }
 
 const statusOptions: { value: TaskStatus; label: string }[] = [
@@ -39,10 +45,14 @@ const priorityOptions: { value: TaskPriority; label: string }[] = [
 
 export default function TaskDetailDrawer({
   task,
+  projectTasks,
   members,
   labels,
+  canDeleteTasks,
+  canManageDependencies,
   onClose,
   onSaved,
+  onDeleted,
 }: TaskDetailDrawerProps) {
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description ?? "");
@@ -55,9 +65,33 @@ export default function TaskDetailDrawer({
   const [selectedLabels, setSelectedLabels] = useState<number[]>(
     task.labels ?? []
   );
-
+  const [dependencies, setDependencies] = useState<TaskDependencies | null>(null);
+  const [dependenciesLoading, setDependenciesLoading] = useState(true);
+  const [dependenciesError, setDependenciesError] = useState("");
+  const [newPrerequisiteId, setNewPrerequisiteId] = useState("");
+  const [dependencySaving, setDependencySaving] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [deleting, setDeleting] = useState(false);
+
+const handleDelete = async () => {
+  const confirmed = window.confirm(
+    `Permanently delete "${task.title}"? Its activity history and dependency links will also be deleted.`
+  );
+
+  if (!confirmed) return;
+
+  try {
+    setDeleting(true);
+    setError("");
+    await deleteTask(task.id);
+    onDeleted(task.id);
+  } catch {
+    setError("Unable to delete this task. Check your permissions and project status.");
+  } finally {
+    setDeleting(false);
+  }
+};
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -69,6 +103,68 @@ export default function TaskDetailDrawer({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onClose, saving]);
+  useEffect(() => {
+  let current = true;
+
+  getTaskDependencies(task.id)
+    .then((result) => {
+      if (current) setDependencies(result);
+    })
+    .catch(() => {
+      if (current) setDependenciesError("Unable to load task dependencies.");
+    })
+    .finally(() => {
+      if (current) setDependenciesLoading(false);
+    });
+
+  return () => {
+    current = false;
+  };
+}, [task.id]);
+
+  const availablePrerequisites = projectTasks.filter(
+    (candidate) =>
+      candidate.id !== task.id &&
+      !dependencies?.prerequisites.some(
+        (dependency) => dependency.prerequisite_task_id === candidate.id
+      )
+  );
+
+  const refreshDependencies = async () => {
+    const updatedDependencies = await getTaskDependencies(task.id);
+    setDependencies(updatedDependencies);
+  };
+
+  const handleAddPrerequisite = async () => {
+    if (!newPrerequisiteId) return;
+
+    try {
+      setDependencySaving(true);
+      setDependenciesError("");
+      await addTaskDependency(task.id, Number(newPrerequisiteId));
+      setNewPrerequisiteId("");
+      await refreshDependencies();
+    } catch {
+      setDependenciesError(
+        "Unable to add prerequisite. It may create a cycle, or you may not have permission."
+      );
+    } finally {
+      setDependencySaving(false);
+    }
+  };
+
+  const handleRemovePrerequisite = async (dependencyId: number) => {
+    try {
+      setDependencySaving(true);
+      setDependenciesError("");
+      await removeTaskDependency(task.id, dependencyId);
+      await refreshDependencies();
+    } catch {
+      setDependenciesError("Unable to remove prerequisite.");
+    } finally {
+      setDependencySaving(false);
+    }
+  };
 
   const toggleLabel = (labelId: number) => {
     setSelectedLabels((current) =>
@@ -300,7 +396,111 @@ export default function TaskDetailDrawer({
                 </div>
               )}
             </div>
+            <div className="space-y-4 border-t border-slate-800 pt-4">
+  <h3 className="font-semibold text-white">Dependencies</h3>
 
+  {dependenciesLoading && (
+    <p className="text-sm text-slate-400">Loading dependencies...</p>
+  )}
+
+  {dependenciesError && (
+    <p role="alert" className="text-sm text-red-400">
+      {dependenciesError}
+    </p>
+  )}
+
+  {dependencies && (
+    <>
+      <div>
+        <h4 className="text-sm font-medium text-slate-300">Prerequisites</h4>
+        {dependencies.prerequisites.length === 0 ? (
+          <p className="mt-1 text-sm text-slate-500">
+            This task has no prerequisites.
+          </p>
+        ) : (
+          <ul className="mt-2 space-y-2">
+            {dependencies.prerequisites.map((item) => (
+              <li
+                key={item.id}
+                className="flex items-center justify-between gap-3 rounded-lg border border-slate-800 p-3 text-sm"
+              >
+                <span>
+                  <span className="text-white">{item.prerequisite_task_title}</span>
+                  <span className="ml-2 text-slate-400">
+                    {item.prerequisite_task_status.replaceAll("_", " ")}
+                  </span>
+                </span>
+                {canManageDependencies && (
+                  <button
+                    type="button"
+                    onClick={() => handleRemovePrerequisite(item.id)}
+                    disabled={dependencySaving}
+                    className="shrink-0 text-xs text-red-400 hover:text-red-300 disabled:opacity-50"
+                  >
+                    Remove
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {canManageDependencies && (
+          <div className="mt-3 flex gap-2">
+            <select
+              aria-label="Choose prerequisite task"
+              value={newPrerequisiteId}
+              onChange={(event) => setNewPrerequisiteId(event.target.value)}
+              disabled={
+                dependencySaving || availablePrerequisites.length === 0
+              }
+              className={inputClass}
+            >
+              <option value="">
+                {availablePrerequisites.length === 0
+                  ? "No available prerequisite tasks"
+                  : "Choose a prerequisite task"}
+              </option>
+              {availablePrerequisites.map((candidate) => (
+                <option key={candidate.id} value={candidate.id}>
+                  #{candidate.id} — {candidate.title}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={handleAddPrerequisite}
+              disabled={dependencySaving || !newPrerequisiteId}
+              className="shrink-0 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium disabled:opacity-50"
+            >
+              {dependencySaving ? "Saving..." : "Add"}
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div>
+        <h4 className="text-sm font-medium text-slate-300">Dependents</h4>
+        {dependencies.dependents.length === 0 ? (
+          <p className="mt-1 text-sm text-slate-500">
+            No tasks are waiting on this task.
+          </p>
+        ) : (
+          <ul className="mt-2 space-y-2">
+            {dependencies.dependents.map((item) => (
+              <li
+                key={item.id}
+                className="rounded-lg border border-slate-800 p-3 text-sm text-white"
+              >
+                {item.dependent_task_title}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </>
+  )}
+</div>
             {/* Timestamps */}
             <div className="space-y-1 border-t border-slate-800 pt-4 text-xs text-slate-500">
               <p>
@@ -328,7 +528,16 @@ export default function TaskDetailDrawer({
             >
               Cancel
             </button>
-
+            {canDeleteTasks && (
+  <button
+    type="button"
+    onClick={handleDelete}
+    disabled={saving || deleting}
+    className="mr-auto rounded-lg border border-red-900 px-4 py-2.5 text-sm text-red-400 hover:bg-red-950 disabled:opacity-50"
+  >
+    {deleting ? "Deleting..." : "Delete task"}
+  </button>
+)}
             <button
               type="submit"
               disabled={saving || !title.trim()}

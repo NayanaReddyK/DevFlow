@@ -85,3 +85,39 @@ def create_task(
     if labels:
         task.labels.set(labels)
     return task
+
+
+def has_cycle(prerequisite_task_id: int, dependent_task_id: int) -> bool:
+    """
+    Return True if adding the edge prerequisite→dependent would create a cycle.
+    Uses iterative BFS from dependent_task looking for prerequisite_task.
+    Does NOT use recursion (safe for large graphs, NFR-04).
+    """
+    from .models import TaskDependency
+    from collections import deque
+    visited = set()
+    queue = deque([dependent_task_id])
+    while queue:
+        current = queue.popleft()
+        if current == prerequisite_task_id:
+            return True
+        if current in visited:
+            continue
+        visited.add(current)
+        # All tasks that `current` depends on (its prerequisites)
+        for dependent_id in TaskDependency.objects.filter(
+            prerequisite_task_id=current
+        ).values_list("dependent_task_id", flat=True):
+            if dependent_id not in visited:
+                queue.append(dependent_id)
+
+
+def log_activity(*, task, actor, action, detail=None):
+    from .models import ActivityLog
+    ActivityLog.objects.create(
+        task=task,
+        project=task.project,
+        actor=actor,
+        action=action,
+        detail=detail or {},
+    )

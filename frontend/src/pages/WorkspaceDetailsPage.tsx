@@ -1,6 +1,7 @@
 
 import { useCallback, useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import axios from "axios";
 import {
   createProject,
   getWorkspaceProjects,
@@ -8,6 +9,7 @@ import {
 } from "../api/projectApi";
 import {
   addWorkspaceMember,
+  deleteWorkspace,
   getWorkspace,
   getWorkspaceMembers,
   removeWorkspaceMember,
@@ -19,6 +21,7 @@ import type { Workspace } from "../types/workspace";
 
 export default function WorkspaceDetailsPage() {
   const { slug } = useParams<{ slug: string }>();
+  const navigate = useNavigate();
   const [projects, setProjects] = useState<Project[]>([]);
   const [projectName, setProjectName] = useState("");
   const [projectDescription, setProjectDescription] = useState("");
@@ -31,6 +34,7 @@ export default function WorkspaceDetailsPage() {
 
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [deletingWorkspace, setDeletingWorkspace] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
@@ -38,8 +42,6 @@ export default function WorkspaceDetailsPage() {
     if (!slug) return;
 
     try {
-      setError("");
-
       const [workspaceData, memberData, projectData] = await Promise.all([
   getWorkspace(slug),
   getWorkspaceMembers(slug),
@@ -49,6 +51,7 @@ export default function WorkspaceDetailsPage() {
 setWorkspace(workspaceData);
 setMembers(memberData);
 setProjects(projectData);
+      setError("");
 
       setWorkspace(workspaceData);
       setMembers(memberData);
@@ -60,6 +63,8 @@ setProjects(projectData);
   }, [slug]);
 
   useEffect(() => {
+    // State updates happen when the asynchronous API requests resolve.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadWorkspace();
   }, [loadWorkspace]);
 
@@ -165,6 +170,30 @@ setProjects(projectData);
     }
   };
 
+  const handleDeleteWorkspace = async () => {
+    if (!slug || !workspace || projects.length > 0) return;
+
+    const confirmed = window.confirm(
+      `Permanently delete workspace "${workspace.name}"? This cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    try {
+      setDeletingWorkspace(true);
+      setError("");
+      setSuccess("");
+      await deleteWorkspace(slug);
+      navigate("/workspaces");
+    } catch (deleteError: unknown) {
+      const message = axios.isAxiosError<{ detail?: string }>(deleteError)
+        ? deleteError.response?.data?.detail
+        : undefined;
+      setError(message ?? "Unable to delete this workspace.");
+    } finally {
+      setDeletingWorkspace(false);
+    }
+  };
+
   if (loading) {
     return (
       <main className="min-h-screen bg-slate-950 p-8 text-white">
@@ -210,22 +239,41 @@ setProjects(projectData);
           ← Back to workspaces
         </Link>
 
-        <div className="mt-6">
-          <h1 className="text-3xl font-bold">{workspace.name}</h1>
+        <div className="mt-6 flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-bold">{workspace.name}</h1>
 
-          <div className="mt-3 flex flex-wrap gap-3 text-sm text-slate-400">
-            <span>
-              Your role:{" "}
-              <span className="font-medium text-blue-400">
-                {workspace.role}
+            <div className="mt-3 flex flex-wrap gap-3 text-sm text-slate-400">
+              <span>
+                Your role:{" "}
+                <span className="font-medium text-blue-400">
+                  {workspace.role}
+                </span>
               </span>
-            </span>
 
-            <span>•</span>
+              <span>•</span>
 
-            <span>{members.length} members</span>
+              <span>{members.length} members</span>
+            </div>
           </div>
+
+          {isOwner && projects.length === 0 && (
+            <button
+              type="button"
+              onClick={handleDeleteWorkspace}
+              disabled={deletingWorkspace}
+              className="rounded-lg border border-red-900 px-4 py-2 text-sm text-red-400 hover:bg-red-950 disabled:opacity-50"
+            >
+              {deletingWorkspace ? "Deleting..." : "Delete workspace"}
+            </button>
+          )}
         </div>
+
+        {isOwner && projects.length > 0 && (
+          <p className="mt-4 text-sm text-slate-500">
+            Delete all projects before deleting this workspace.
+          </p>
+        )}
 
         {error && (
           <p role="alert" className="mt-6 text-red-400">

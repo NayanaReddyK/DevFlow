@@ -2,15 +2,16 @@
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 
-from rest_framework import generics
+from rest_framework import generics, status
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 
 from projects.models import Project
 from workspaces.models import WorkspaceMember
 
-from .models import Task, TaskLabel
+from .models import Task, TaskLabel, TaskDependency, ActivityLog
 from .permissions import TaskPermission
 from .serializers import (
     TaskCreateSerializer,
@@ -18,7 +19,10 @@ from .serializers import (
     TaskSerializer,
     TaskUpdateSerializer,
     TaskLabelSerializer,
+    TaskDependencySerializer,
+    AddDependencySerializer,
 )
+from .services import create_task, log_activity
 
 
 
@@ -177,6 +181,32 @@ class TaskDetailView(generics.RetrieveUpdateDestroyAPIView):
 
         return TaskSerializer
 
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop("partial", False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+
+        new_status = serializer.validated_data.get("status")
+        warnings = []
+        if new_status == Task.Status.IN_PROGRESS and instance.is_blocked:
+            warnings.append("This task is blocked by incomplete prerequisites.")
+
+        # Log status change
+        if new_status and new_status != instance.status:
+            log_activity(
+                task=instance,
+                actor=request.user,
+                action=ActivityLog.Action.STATUS_CHANGED,
+                detail={"from": instance.status, "to": new_status},
+            )
+
+        self.perform_update(serializer)
+        response_data = TaskSerializer(instance, context=self.get_serializer_context()).data
+        if warnings:
+            response_data["warnings"] = warnings
+        return Response(response_data)
+
 class ProjectLabelListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = TaskLabelSerializer
@@ -309,3 +339,123 @@ class TaskLabelDetailView(generics.RetrieveUpdateDestroyAPIView):
             )
 
         return super().destroy(request, *args, **kwargs)
+
+
+class TaskDependencyListCreateView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated]
+
+    def get_task(self):
+        user = self.request.user
+        accessible = Task.objects.filter(
+            Q(project__memberships__user=user)
+            | Q(
+                project__workspace__memberships__user=user,
+                project__workspace__memberships__role__in=[
+                    WorkspaceMember.Role.OWNER,
+                    WorkspaceMember.Role.ADMIN,
+                ],
+            )
+        ).distinct()
+        return get_object_or_404(accessible, pk=self.kwargs["task_pk"])
+
+    def _can_manage(self, task):
+        user = self.request.user
+        project = task.project
+        is_admin = WorkspaceMember.objects.filter(
+            workspace=project.workspace,
+            user=user,
+            role__in=[WorkspaceMember.Role.OWNER, WorkspaceMember.Role.ADMIN],
+        ).exists()
+        from projects.models import ProjectMember
+        is_manager = ProjectMember.objects.filter(
+            project=project, user=user, role=ProjectMember.Role.MANAGER
+        ).exists()
+        return is_admin or is_manager
+
+    def get(self, request, task_pk):
+        task = self.get_task()
+        prerequisites = TaskDependency.objects.filter(
+            dependent_task=task
+        ).select_related("prerequisite_task", "dependent_task", "created_by")
+        dependents = TaskDependency.objects.filter(
+            prerequisite_task=task
+        ).select_related("prerequisite_task", "dependent_task", "created_by")
+        return Response({
+            "prerequisites": TaskDependencySerializer(prerequisites, many=True).data,
+            "dependents": TaskDependencySerializer(dependents, many=True).data,
+        })
+
+    def post(self, request, task_pk):
+        task = self.get_task()
+        if not self._can_manage(task):
+            raise PermissionDenied("Only project managers and workspace admins can add dependencies.")
+        if task.project.status != "ACTIVE":
+            raise PermissionDenied("Cannot add dependencies to tasks in an inactive project.")
+
+        serializer = AddDependencySerializer(
+            data=request.data,
+            context={"request": request, "dependent_task": task},
+        )
+        serializer.is_valid(raise_exception=True)
+        prerequisite_task = serializer.context["prerequisite_task"]
+
+        dep = TaskDependency.objects.create(
+            prerequisite_task=prerequisite_task,
+            dependent_task=task,
+            created_by=request.user,
+        )
+        log_activity(
+            task=task,
+            actor=request.user,
+            action=ActivityLog.Action.DEPENDENCY_ADDED,
+            detail={"prerequisite_task_id": prerequisite_task.pk, "prerequisite_task_title": prerequisite_task.title},
+        )
+        return Response(TaskDependencySerializer(dep).data, status=status.HTTP_201_CREATED)
+
+
+class TaskDependencyDetailView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated]
+
+    def get_task(self):
+        user = self.request.user
+        accessible = Task.objects.filter(
+            Q(project__memberships__user=user)
+            | Q(
+                project__workspace__memberships__user=user,
+                project__workspace__memberships__role__in=[
+                    WorkspaceMember.Role.OWNER,
+                    WorkspaceMember.Role.ADMIN,
+                ],
+            )
+        ).distinct()
+        return get_object_or_404(accessible, pk=self.kwargs["task_pk"])
+
+    def _can_manage(self, task):
+        user = self.request.user
+        project = task.project
+        is_admin = WorkspaceMember.objects.filter(
+            workspace=project.workspace,
+            user=user,
+            role__in=[WorkspaceMember.Role.OWNER, WorkspaceMember.Role.ADMIN],
+        ).exists()
+        from projects.models import ProjectMember
+        is_manager = ProjectMember.objects.filter(
+            project=project, user=user, role=ProjectMember.Role.MANAGER
+        ).exists()
+        return is_admin or is_manager
+
+    def delete(self, request, task_pk, dep_id):
+        task = self.get_task()
+        if not self._can_manage(task):
+            raise PermissionDenied("Only project managers and workspace admins can remove dependencies.")
+        dep = get_object_or_404(TaskDependency, pk=dep_id, dependent_task=task)
+        prereq_title = dep.prerequisite_task.title
+        prereq_id = dep.prerequisite_task.pk
+        dep.delete()
+        log_activity(
+            task=task,
+            actor=request.user,
+            action=ActivityLog.Action.DEPENDENCY_REMOVED,
+            detail={"prerequisite_task_id": prereq_id, "prerequisite_task_title": prereq_title},
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
